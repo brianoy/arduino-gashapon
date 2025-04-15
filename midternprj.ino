@@ -10,45 +10,77 @@ const int ldr_in_pin = A3;
 const int data_pin = 2;
 const int latch_pin = 3;
 const int clock_pin = 4;
+const int NO_CONNECT_1 = 7;
 const int force_btn_pin = 8;
 const int btn_pin = 9;
 const int ldr_vcc_pin = 10;
 const int vr_vcc_pin = 11;
 const int servo_pin = 12;
+const int NO_CONNECT_2 = 13;
 
 int outcomeLEDs[4][2] = {
-  {0, 4}, // 0 顆
-  {1, 5}, // 1 顆
-  {2, 6}, // 2 顆
-  {3, 7}  // 再來一次
+  {0, 4}, // 0 顆 黃色
+  {1, 5}, // 1 顆 綠色
+  {2, 6}, // 2 顆 紅色 大獎
+  {3, 7}  // 再來一次 白色
 };
 
-bool coin = false;
-bool start = false;
-long capsule_counter = 0;
-long coin_counter = 0;
+// 狀態變數
+int outcome = -1; // 0: 0顆, 1: 1顆, 2: 2顆, 3: 再來一次 -1:NULL
+int capsule_buffer = 0;
+int stage = 0;
+
+int capsule_counter = 0;
+int coin_counter = 0;
 int finalLEDIndex = 0;
-int outcome = 0; // 0: 0顆, 1: 1顆, 2: 2顆, 3: 再來一次
+
+static int i = 0;
+static int j = 0;
+
 Servo motor;
 
 // ====== 子函式 定義區 ======
-void drop() {
-  delay(1000);
-  for (int i = 0; i <= 180; i++) {
-    motor.write(i);
-    delay(5);
-  }
-  delay(3000);
-  for (int i = 180; i >= 0; i--) {
-    motor.write(i);
-    delay(5);
-  }
-}
-
 void clearLEDs() {
   digitalWrite(latch_pin, LOW);
   shiftOut(data_pin, clock_pin, LSBFIRST, 0);
   digitalWrite(latch_pin, HIGH);
+}
+
+COROUTINE(step5) {
+  COROUTINE_LOOP(){
+    if (capsule_buffer > 0){
+      // bug: for 內不能使用區域變數
+      static int j = 0;
+      for (j = 0; j <= 180; j++) {
+        motor.write(j);
+        COROUTINE_DELAY(5);
+      }
+      COROUTINE_DELAY(2500);
+      for (j = 180; j >= 0; j--) {
+        motor.write(j);
+        COROUTINE_DELAY(5);
+      }
+      COROUTINE_DELAY(2500);
+      capsule_counter++;
+      capsule_buffer--;
+      COROUTINE_YIELD();
+    }
+    else if (stage == 5 && capsule_buffer == 0) {
+      clearLEDs();
+      COROUTINE_DELAY(1000);
+      Serial.print("總扭出數量: ");
+      Serial.print(capsule_counter);
+      Serial.print(" 總投幣量: ");
+      Serial.print(coin_counter);
+      Serial.println();
+      Serial.println("==========(結束)==========");
+      stage = 0; // 復位
+      COROUTINE_YIELD();
+    }
+    else{
+      COROUTINE_YIELD();
+    }
+  }
 }
 
 // 設定單一 LED 點亮，ledIndex 為 0~7 （對應 LED 1~8）
@@ -60,19 +92,53 @@ void setLED(int ledIndex) {
 }
 
 COROUTINE(reward_led_blink) {
-  COROUTINE_BEGIN();
-  setLED(finalLEDIndex);
-  COROUTINE_DELAY(300);
-  clearLEDs();
-  COROUTINE_DELAY(300);
-  COROUTINE_END();
+  COROUTINE_LOOP(){
+    if (stage == 5 || stage == 4){
+      setLED(finalLEDIndex);
+      COROUTINE_DELAY(300);
+      clearLEDs();
+      COROUTINE_DELAY(300);
+    }
+    else{
+      COROUTINE_YIELD();
+    }
+  }
 }
 
-// 開始執行抽獎 LED 轉盤效果及結果決定
-void runLotteryCycle() {
-  int vr_percent = map(analogRead(vr_in_pin), 0, 1022, 0, 100);
-  
-  if (random(0, 100) < vr_percent) {
+COROUTINE(step4) {
+  COROUTINE_LOOP() {
+    if (stage == 4){
+      COROUTINE_DELAY(2000);
+      if (outcome == 0) {
+        Serial.println("獎項判斷：抽到 0 顆");
+        COROUTINE_DELAY(2000); // bug fix:這樣才可以觸發閃爍
+        stage = 5;
+      }
+      else if (outcome == 1){
+        Serial.println("獎項判斷：抽到 1 顆");
+        capsule_buffer++;
+        stage = 5;
+      }
+      else if (outcome == 2){
+        Serial.println("獎項判斷：抽到 2 顆");
+        capsule_buffer++;
+        capsule_buffer++;
+        stage = 5;
+      }
+      else{
+        Serial.println("獎項判斷：再抽一次");
+        Serial.println("-->");
+        COROUTINE_DELAY(3500); // spec: 要三秒 但是我體感太短了
+        stage = 3;
+      }
+      outcome = -1;
+    }
+    COROUTINE_YIELD();
+  }
+}
+
+void choose_reward(int chance) { //fast
+  if (random(0, 100) < chance) {
     outcome = 2;
     Serial.println("獎項決定：抽到 2 顆");
   } 
@@ -92,67 +158,6 @@ void runLotteryCycle() {
       Serial.println("獎項決定：再來一次");
     }
   }
-  
-  // 從 outcome 對應的 LED 位置中隨機選一個作為最終停留的 LED
-  int finalLEDChoices[2] = { outcomeLEDs[outcome][0], outcomeLEDs[outcome][1] };
-  finalLEDIndex = finalLEDChoices[random(0, 2)];
-  Serial.print("最終停留 LED（以 0 為起始）： ");
-  Serial.println(finalLEDIndex);
-  
-  // LED 轉盤效果：假設從 LED 0 開始
-  int startIndex = 0;
-  int cycles = 8;  // 最少迴圈數
-  int offset = finalLEDIndex - startIndex;
-  if (offset < 0) {
-    offset += 8;
-  }
-  int totalSteps = cycles * 8 + offset;
-  Serial.print("LED 轉盤總步數： ");
-  Serial.println(totalSteps);
-  
-  // 轉盤效果的延遲設定：初始延遲及每步增加的時間 (ms)
-  int delayTime = 15;
-  int delayIncrement = 2;
-  // 執行 LED 轉盤 (每步依序點亮下一顆 LED)
-  for (int i = 0; i <= totalSteps; i++) {
-    int currentLED = (startIndex + i) % 8;
-    setLED(currentLED);
-    delay(delayTime);
-    delayTime += delayIncrement;
-  }
-  
-  // 最後停留狀態保持一段時間
-  // setLED(finalLEDIndex);
-  for (int i = 0; i <= 3; i++) {
-    reward_led_blink.runCoroutine();
-  }
-
-  // =======================================
-  // 
-  if (outcome == 0) {
-    Serial.println("獎項判斷：抽到 0 顆");
-    delay(1000);
-  } 
-  else if (outcome == 1){
-    Serial.println("獎項判斷：抽到 1 顆");
-    drop();
-    delay(1000);
-  }
-  else if (outcome == 2){
-    Serial.println("獎項判斷：抽到 2 顆");
-    drop();
-    delay(500);
-    drop(); 
-    delay(500);
-  }
-  else{
-    Serial.println("獎項判斷：再抽一次");
-    delay(1000);
-    runLotteryCycle();
-  }
-  
-
-  clearLEDs();
 }
 
 void pin_settings(){
@@ -164,86 +169,153 @@ void pin_settings(){
   pinMode(btn_pin, INPUT);
   pinMode(ldr_vcc_pin, OUTPUT);
   pinMode(vr_vcc_pin, OUTPUT);
-
+  // ====================
   digitalWrite(ldr_vcc_pin, HIGH);
   digitalWrite(vr_vcc_pin, HIGH);
-  
+  // ====================
   motor.attach(servo_pin);
-  motor.write(0); // 歸0復位
-  randomSeed(analogRead(A0));
+  motor.write(0); // motor試轉
+  delay(100);
+  motor.write(10); // motor試轉
+  delay(300);
+  motor.write(0); // motor試轉
+  delay(100);
+  motor.write(10); // motor試轉
+  delay(100);
+  motor.write(0);// motor歸0復位
+  randomSeed(random_seed_pin);
   clearLEDs();
 }
 
 void led_idle_shift_1(){
-  //Serial.println("led1");
   digitalWrite(latch_pin, LOW);
   shiftOut(data_pin, clock_pin, LSBFIRST, 170);
   digitalWrite(latch_pin, HIGH);
 }
 
 void led_idle_shift_2(){
-  //Serial.println("led2");
   digitalWrite(latch_pin, LOW);
   shiftOut(data_pin, clock_pin, LSBFIRST, 85);
   digitalWrite(latch_pin, HIGH);
 }
 
 void led_coin_show(){
-  //Serial.println("led_all_show");
   digitalWrite(latch_pin, LOW);
   shiftOut(data_pin, clock_pin, LSBFIRST, 255);
   digitalWrite(latch_pin, HIGH);
 }
 
-// ====== coroutine 定義區 ======
-
-COROUTINE(idle) {
-  COROUTINE_LOOP(){
-    if (!coin) {
+COROUTINE(step0) {
+  COROUTINE_LOOP() {
+    if (stage == 0) {
       // led show
       led_idle_shift_1();
       COROUTINE_DELAY(500);
       led_idle_shift_2();
       COROUTINE_DELAY(500);
     }
+    else{ // 沒有要閃燈就handsoff
+      COROUTINE_YIELD();
+    }
   }
 }
 
-COROUTINE(flash_led) {
-  COROUTINE_LOOP(){
-    led_coin_show();
-    COROUTINE_DELAY(500);
-    clearLEDs();
-    COROUTINE_DELAY(500);
+COROUTINE(flash_all_led) {
+  COROUTINE_LOOP() {
+    if (stage == 1){ // 透下硬幣但是還沒開始
+      led_coin_show();
+      COROUTINE_DELAY(500);
+      clearLEDs();
+      COROUTINE_DELAY(500);
+    }
+    else{ // 沒有要閃燈就handsoff
+      COROUTINE_YIELD();
+    }
   }
 }
 
-COROUTINE(detect_coin) {
+COROUTINE(step1) {
   COROUTINE_LOOP(){
-    if (analogRead(ldr_in_pin) > 500){
-      Serial.println("====================");
+    if ((stage == 0) && analogRead(ldr_in_pin) > 500){
+      Serial.println("==========(開始)==========");
       Serial.println("投幣");
-      coin = true;
+      stage = 1;
+      coin_counter++;
     }
     
-    while(coin){
-      flash_led.runCoroutine(); //wierd?
-
-      if(digitalRead(btn_pin) == HIGH){
-        Serial.println("解開thread");
-        start = true;
-        Serial.println("按下按鈕");
-        runLotteryCycle();
-        Serial.println("====================");
-        break;
-      }
+    if ((stage == 1) && (digitalRead(btn_pin) == HIGH)) {
+      stage = 2;
+      Serial.println("按下按鈕");
+      delay(150); // 防止跳過step3 main thread block
     }
-    
-    coin = false;
-    start = false;
-    COROUTINE_YIELD(); // thread handsoff
+    COROUTINE_YIELD(); // handsoff
   }
 }
+
+COROUTINE(force_btn) {
+  COROUTINE_LOOP(){
+    if ((stage == 0) && (digitalRead(force_btn_pin) == HIGH)){
+      stage = 5;
+      capsule_buffer = 6;
+    }
+    COROUTINE_YIELD(); // handsoff
+  }
+}
+
+COROUTINE(step2) {
+  COROUTINE_LOOP(){
+    if (stage == 2 || stage == 3){
+      int vr_percent = map(analogRead(vr_in_pin), 0, 1022, 0, 100); // 抽到兩顆的機率
+      choose_reward(vr_percent);
+
+      // 從 outcome 對應的 LED 位置中隨機選一個作為最終停留的 LED
+      int finalLEDChoices[2] = { outcomeLEDs[outcome][0], outcomeLEDs[outcome][1] };
+      finalLEDIndex = finalLEDChoices[random(0, 2)];
+      Serial.print("最終停留 LED（以 0 為起始）： ");
+      Serial.println(finalLEDIndex);
+      
+      // LED 轉盤效果：假設從 LED 0 開始
+      int startIndex = 0;
+      // ===================================
+      int delayTime = 30; // 轉盤效果初始延遲 
+      int delayIncrement = 2; // 轉盤效果每步增加的時間
+      int currentLED = 0;
+
+      if (stage == 2) {
+        for (i = 0; i <= 300; i++) {
+          currentLED = (startIndex + i) % 8;
+          setLED(currentLED);
+          delay(delayTime);
+          if (digitalRead(btn_pin) == HIGH) {
+            stage = 3;
+            startIndex = currentLED;
+            break; // stage3
+          }
+        }
+      }
+
+      int offset = finalLEDIndex - startIndex;
+      if (offset < 0) {
+        offset += 8;
+      }
+      int totalSteps = 8 * 8 + offset;
+      Serial.print("LED 轉盤總步數： ");
+      Serial.println(totalSteps);
+
+      stage = 3;
+
+      for (i = 0; i <= totalSteps; i++) {
+        currentLED = (startIndex + i) % 8;
+        setLED(currentLED);
+        delay(delayTime);
+        delayTime += delayIncrement;
+      }
+      stage = 4;
+    }
+    COROUTINE_YIELD(); // handsoff
+  }
+}
+
 
 // ====== 主程式 ======
 
@@ -252,6 +324,12 @@ void setup() {
 }
 
 void loop() {
-  idle.runCoroutine();
-  detect_coin.runCoroutine();
+  step0.runCoroutine();
+  step1.runCoroutine();
+  flash_all_led.runCoroutine();
+  step2.runCoroutine();
+  step4.runCoroutine();
+  reward_led_blink.runCoroutine();
+  step5.runCoroutine();
+  force_btn.runCoroutine();
 }
