@@ -53,14 +53,14 @@
 
 - 使用 [AceRoutine](https://github.com/bxparks/AceRoutine) 處理非阻塞式多階段流程
 - 多個 `COROUTINE()` 協程對應：
-  - `step0`：待機動畫
-  - `step1`：投幣與按鈕觸發
-  - `step2`：轉盤動畫與結果判定
+  - `step0`：未投幣的待機動畫
+  - `step1`：投幣後與第一次按鈕觸發
+  - `step2`：第二次按鈕觸發、轉盤動畫與結果判定
   - `step4`：依結果更新狀態
   - `step5`：控制伺服馬達發送扭蛋
   - `reward_led_blink`：閃爍中獎 LED
   - `flash_all_led`：顯示投幣完成效果
-  - `force_btn`：緊急模式可一次發送6顆扭蛋
+  - `force_btn`：背後按鈕可一次出6顆扭蛋
 
 ---
 
