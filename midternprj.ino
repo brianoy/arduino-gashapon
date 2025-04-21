@@ -66,6 +66,7 @@ COROUTINE(step5) {
       COROUTINE_YIELD();
     }
     else if (stage == 5 && capsule_buffer == 0) {
+      stage = 6; // bugfix: 不存在的stage 這樣後面就不會閃爍衝突
       clearLEDs();
       COROUTINE_DELAY(1000);
       Serial.print("總扭出數量: ");
@@ -108,7 +109,7 @@ COROUTINE(reward_led_blink) {
 COROUTINE(step4) {
   COROUTINE_LOOP() {
     if (stage == 4){
-      COROUTINE_DELAY(2000);
+      COROUTINE_DELAY(1500);
       if (outcome == 0) {
         Serial.println("獎項判斷：抽到 0 顆");
         COROUTINE_DELAY(2000); // bug fix:這樣才可以觸發閃爍
@@ -128,7 +129,7 @@ COROUTINE(step4) {
       else{
         Serial.println("獎項判斷：再抽一次");
         Serial.println("-->");
-        COROUTINE_DELAY(3500); // spec: 要三秒 但是我體感太短了
+        COROUTINE_DELAY(3000); // spec: 要三秒
         stage = 3;
       }
       outcome = -1;
@@ -137,25 +138,40 @@ COROUTINE(step4) {
   }
 }
 
-void choose_reward(int chance) { //fast
+void choose_reward(int chance) { // fast
   if (random(0, 100) < chance) {
+    // 機率為x
     outcome = 2;
-    Serial.println("獎項決定：抽到 2 顆");
+    Serial.print("機率: ");
+    Serial.print(chance);
+    Serial.println("，獎項決定：抽到 2 顆");
   } 
   else {
+    // feat: 降低再來一次的機率，機率顯示
+
     // 由 0、1、3 隨機選一
-    int r = random(0, 3);  // 可得到 0, 1, 2
-    if (r == 0) {
+    int r = random(0, 5);  // 可得到 0, 1, 2,3,4
+    if (r == 0 || r == 1) {
+      // 機率0.4*(1-x)
       outcome = 0;
-      Serial.println("獎項決定：抽到 0 顆");
+      Serial.print("機率: ");
+      Serial.print(0.4*(100-chance));
+      Serial.println("，獎項決定：抽到 0 顆");
     } 
-    else if (r == 1) {
+    else if (r == 2 || r == 3) {
+      // 機率0.4*(1-x)
       outcome = 1;
-      Serial.println("獎項決定：抽到 1 顆");
+      Serial.print("機率: ");
+      Serial.print(0.4*(100-chance));
+      Serial.println("，獎項決定：抽到 1 顆");
     } 
-    else { // r == 2
+    else { // r == 4
+      // 機率0.2*(1-x)
       outcome = 3;
-      Serial.println("獎項決定：再來一次");
+      randomSeed(random_seed_pin); // feat: 變更隨機seed
+      Serial.print("機率: ");
+      Serial.print(0.2*(100-chance));
+      Serial.println("，獎項決定：再來一次");
     }
   }
 }
@@ -183,6 +199,7 @@ void pin_settings(){
   motor.write(10); // motor試轉
   delay(100);
   motor.write(0);// motor歸0復位
+  
   randomSeed(random_seed_pin);
   clearLEDs();
 }
@@ -244,9 +261,10 @@ COROUTINE(step1) {
     }
     
     if ((stage == 1) && (digitalRead(btn_pin) == HIGH)) {
+      while (digitalRead(btn_pin) == HIGH); // bugfix: 防按鈕連擊
       stage = 2;
       Serial.println("按下按鈕");
-      delay(150); // 防止跳過step3 main thread block
+      delay(50); // bugfix: 防止跳過step3 main thread block
     }
     COROUTINE_YIELD(); // handsoff
   }
@@ -256,7 +274,7 @@ COROUTINE(force_btn) {
   COROUTINE_LOOP(){
     if ((stage == 0) && (digitalRead(force_btn_pin) == HIGH)){
       stage = 5;
-      capsule_buffer = 6;
+      capsule_buffer = 1; // 退出一顆
     }
     COROUTINE_YIELD(); // handsoff
   }
@@ -265,7 +283,7 @@ COROUTINE(force_btn) {
 COROUTINE(step2) {
   COROUTINE_LOOP(){
     if (stage == 2 || stage == 3){
-      int vr_percent = map(analogRead(vr_in_pin), 0, 1022, 0, 100); // 抽到兩顆的機率
+      int vr_percent = map(analogRead(vr_in_pin), 20, 1000, 0, 100); // 抽到兩顆的機率 我這邊VR有問題所以是1021 正常是1023
       choose_reward(vr_percent);
 
       // 從 outcome 對應的 LED 位置中隨機選一個作為最終停留的 LED
@@ -287,6 +305,7 @@ COROUTINE(step2) {
           setLED(currentLED);
           delay(delayTime);
           if (digitalRead(btn_pin) == HIGH) {
+            // while (digitalRead(btn_pin) == HIGH); // bugfix: 防按鈕連擊 // 這邊好像不需要了
             stage = 3;
             startIndex = currentLED;
             break; // stage3
