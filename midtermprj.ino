@@ -29,9 +29,9 @@ int outcomeLEDs[4][2] = {
 int outcome = -1; // 0: 0顆, 1: 1顆, 2: 2顆, 3: 再來一次 -1:NULL
 int capsule_buffer = 0;
 int stage = 0;
-
+int zero_counter = 0;
 int capsule_counter = 0;
-int coin_counter = 0;
+int coin_counter = 1;
 int finalLEDIndex = 0;
 
 static int i = 0;
@@ -145,18 +145,28 @@ void choose_reward(int chance) { // fast
     Serial.print("機率: ");
     Serial.print(chance);
     Serial.println("，獎項決定：抽到 2 顆");
+    zero_counter = 1;
   } 
   else {
     // feat: 降低再來一次的機率，機率顯示
-
+    int r;
     // 由 0、1、3 隨機選一
-    int r = random(0, 5);  // 可得到 0, 1, 2,3,4
+    if (zero_counter%3 == 0) { // feat: 投幣三次一定會有保底
+      r = random(1, 2);  // 可得到 1
+      Serial.println("此次保底");
+      zero_counter = 1;
+    }
+    else{
+      r = random(0, 5);  // 可得到 0, 1, 2, 3, 4
+    }
+/*
     if (r == 0 || r == 1) {
       // 機率0.4*(1-x)
       outcome = 0;
       Serial.print("機率: ");
       Serial.print(0.4*(100-chance));
       Serial.println("，獎項決定：抽到 0 顆");
+      zero_counter++;
     } 
     else if (r == 2 || r == 3) {
       // 機率0.4*(1-x)
@@ -165,12 +175,28 @@ void choose_reward(int chance) { // fast
       Serial.print(0.4*(100-chance));
       Serial.println("，獎項決定：抽到 1 顆");
     } 
-    else { // r == 4
+*/
+    if (r == 0) {
+      // 機率0.4*(1-x)
+      outcome = 0;
+      Serial.print("機率: ");
+      Serial.print(0.2*(100-chance));
+      Serial.println("，獎項決定：抽到 0 顆");
+      zero_counter++;
+    } 
+    else if (r == 1) {
+      // 機率0.4*(1-x)
+      outcome = 1;
+      Serial.print("機率: ");
+      Serial.print(0.2*(100-chance));
+      Serial.println("，獎項決定：抽到 1 顆");
+    } 
+    else { // r == 2 3 4
       // 機率0.2*(1-x)
       outcome = 3;
       randomSeed(random_seed_pin); // feat: 變更隨機seed
       Serial.print("機率: ");
-      Serial.print(0.2*(100-chance));
+      Serial.print(0.6*(100-chance));
       Serial.println("，獎項決定：再來一次");
     }
   }
